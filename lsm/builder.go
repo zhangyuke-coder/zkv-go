@@ -1,12 +1,18 @@
 package lsm
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
+	"sort"
 	"unsafe"
 
-	"zkv-go/utils"
+	"github.com/zhangyuke-coder/zkv/file"
+	"github.com/zhangyuke-coder/zkv/pb"
+	"github.com/zhangyuke-coder/zkv/utils"
 )
 
 type tableBuilder struct {
@@ -21,12 +27,17 @@ type tableBuilder struct {
 	staleDataSize int
 	estimateSz    int64
 }
-
+type buildData struct {
+	blockList []*block
+	index     []byte
+	checksum  []byte
+	size      int
+}
 type block struct {
 	offset            int
 	checksum          []byte
 	chkLen            int
-	entrierIndexStart int
+	entriesIndexStart int
 	entryOffsets      []uint32
 	baseKey           []byte
 	end               int
@@ -212,4 +223,234 @@ func (tb *tableBuilder) keyDiff(newKey []byte) []byte {
 	}
 	return newKey[i:]
 }
-func (tb *tableBuilder) flush(lm *levelManager, tableName string) (t *table, err error)
+
+func (tb *tableBuilder) done() buildData {
+	tb.finishBlock()
+	if len(tb.blockList) == 0 {
+		return buildData{}
+	}
+	bd := buildData{
+		blockList: tb.blockList,
+	}
+
+	var f utils.Filter
+	if tb.opt.BloomFalsePositive > 0 {
+		bits := utils.BloomBitsPerKey(len(tb.keyHashes), tb.opt.BloomFalsePositive)
+		f = utils.NewFilter(tb.keyHashes, bits)
+	}
+	// TODO 构建 sst的索引
+	index, dataSize := tb.buildIndex(f)
+	checksum := tb.calculateChecksum(index)
+	bd.index = index
+	bd.checksum = checksum
+	bd.size = int(dataSize) + len(index) + len(checksum) + 4 + 4
+	return bd
+}
+func (tb *tableBuilder) buildIndex(bloom []byte) ([]byte, uint32) {
+	tableIndex := &pb.TableIndex{}
+	if len(bloom) > 0 {
+		tableIndex.BloomFilter = bloom
+	}
+	tableIndex.KeyCount = tb.keyCount
+	tableIndex.MaxVersion = tb.maxVersion
+	tableIndex.Offsets = tb.writeBlockOffsets(tableIndex)
+	var dataSize uint32
+	for i := range tb.blockList {
+		dataSize += uint32(tb.blockList[i].end)
+	}
+
+	data, err := tableIndex.Marshal()
+	utils.Panic(err)
+	return data, dataSize
+}
+
+func (tb *tableBuilder) writeBlockOffsets(tableIndex *pb.TableIndex) []*pb.BlockOffset {
+	var startOffset uint32
+	var offsets []*pb.BlockOffset
+	for _, bl := range tb.blockList {
+		offset := tb.writeBlockOffset(bl, startOffset)
+		offsets = append(offsets, offset)
+		startOffset += uint32(bl.end)
+	}
+	return offsets
+}
+func (b *tableBuilder) writeBlockOffset(bl *block, startOffset uint32) *pb.BlockOffset {
+	offset := &pb.BlockOffset{}
+	offset.Key = bl.baseKey
+	offset.Len = uint32(bl.end)
+	offset.Offset = startOffset
+	return offset
+}
+
+// TODO: 如何能更好的预估builder的长度呢？
+func (b *tableBuilder) ReachedCapacity() bool {
+	return b.estimateSz > b.sstSize
+}
+
+func (b block) verifyCheckSum() error {
+	return utils.VerifyChecksum(b.data, b.checksum)
+}
+func (bd *buildData) Copy(dst []byte) int {
+	var written int
+	for _, bl := range bd.blockList {
+		written += copy(dst[written:], bl.data[:bl.end])
+	}
+	written += copy(dst[written:], bd.index)
+	written += copy(dst[written:], utils.U32ToBytes(uint32(len(bd.index))))
+
+	written += copy(dst[written:], bd.checksum)
+	written += copy(dst[written:], utils.U32ToBytes(uint32(len(bd.checksum))))
+	return written
+}
+func (tb *tableBuilder) flush(lm *levelManager, tableName string) (t *table, err error) {
+	bd := tb.done()
+	t = &table{lm: lm, fid: utils.FID(tableName)}
+	// 如果没有builder 则创打开一个已经存在的sst文件
+	t.ss = file.OpenSStable(&file.Options{
+		FileName: tableName,
+		Dir:      lm.opt.WorkDir,
+		Flag:     os.O_CREATE | os.O_RDWR,
+		MaxSz:    int(bd.size)})
+	buf := make([]byte, bd.size)
+	written := bd.Copy(buf)
+	utils.CondPanic(written != len(buf), fmt.Errorf("tableBuilder.flush written != len(buf)"))
+	dst, err := t.ss.Bytes(0, bd.size)
+	if err != nil {
+		return nil, err
+	}
+	copy(dst, buf)
+	return t, nil
+}
+
+type blockIterator struct {
+	data         []byte
+	idx          int
+	err          error
+	baseKey      []byte
+	key          []byte
+	val          []byte
+	entryOffsets []uint32
+	block        *block
+
+	tableID uint64
+	blockID int
+
+	prevOverlap uint16
+
+	it utils.Item
+}
+
+func (itr *blockIterator) setBlock(b *block) {
+	itr.block = b
+	itr.err = nil
+	itr.idx = 0
+	itr.baseKey = itr.baseKey[:0]
+	itr.prevOverlap = 0
+	itr.key = itr.key[:0]
+	itr.val = itr.val[:0]
+	// Drop the index from the block. We don't need it anymore.
+	itr.data = b.data[:b.entriesIndexStart]
+	itr.entryOffsets = b.entryOffsets
+}
+
+// seekToFirst brings us to the first element.
+func (itr *blockIterator) seekToFirst() {
+	itr.setIdx(0)
+}
+func (itr *blockIterator) seekToLast() {
+	itr.setIdx(len(itr.entryOffsets) - 1)
+}
+func (itr *blockIterator) seek(key []byte) {
+	itr.err = nil
+	startIndex := 0 // This tells from which index we should start binary search.
+
+	foundEntryIdx := sort.Search(len(itr.entryOffsets), func(idx int) bool {
+		// If idx is less than start index then just return false.
+		if idx < startIndex {
+			return false
+		}
+		itr.setIdx(idx)
+		return utils.CompareKeys(itr.key, key) >= 0
+	})
+	itr.setIdx(foundEntryIdx)
+}
+
+func (itr *blockIterator) setIdx(i int) {
+	itr.idx = i
+	if i >= len(itr.entryOffsets) || i < 0 {
+		itr.err = io.EOF
+		return
+	}
+	itr.err = nil
+	startOffset := int(itr.entryOffsets[i])
+
+	// Set base key.
+	if len(itr.baseKey) == 0 {
+		var baseHeader header
+		baseHeader.decode(itr.data)
+		itr.baseKey = itr.data[headerSize : headerSize+baseHeader.diff]
+	}
+
+	var endOffset int
+	// idx points to the last entry in the block.
+	if itr.idx+1 == len(itr.entryOffsets) {
+		endOffset = len(itr.data)
+	} else {
+		// idx point to some entry other than the last one in the block.
+		// EndOffset of the current entry is the start offset of the next entry.
+		endOffset = int(itr.entryOffsets[itr.idx+1])
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			var debugBuf bytes.Buffer
+			fmt.Fprintf(&debugBuf, "==== Recovered====\n")
+			fmt.Fprintf(&debugBuf, "Table ID: %d\nBlock ID: %d\nEntry Idx: %d\nData len: %d\n"+
+				"StartOffset: %d\nEndOffset: %d\nEntryOffsets len: %d\nEntryOffsets: %v\n",
+				itr.tableID, itr.blockID, itr.idx, len(itr.data), startOffset, endOffset,
+				len(itr.entryOffsets), itr.entryOffsets)
+			panic(debugBuf.String())
+		}
+	}()
+
+	entryData := itr.data[startOffset:endOffset]
+	var h header
+	h.decode(entryData)
+	if h.overlap > itr.prevOverlap {
+		itr.key = append(itr.key[:itr.prevOverlap], itr.baseKey[itr.prevOverlap:h.overlap]...)
+	}
+
+	itr.prevOverlap = h.overlap
+	valueOff := headerSize + h.diff
+	diffKey := entryData[headerSize:valueOff]
+	itr.key = append(itr.key[:h.overlap], diffKey...)
+	e := &utils.Entry{Key: itr.key}
+	val := &utils.ValueStruct{}
+	val.DecodeValue(entryData[valueOff:])
+	itr.val = val.Value
+	e.Value = val.Value
+	e.ExpiresAt = val.ExpiresAt
+	e.Meta = val.Meta
+	itr.it = &Item{e: e}
+}
+
+func (itr *blockIterator) Error() error {
+	return itr.err
+}
+
+func (itr *blockIterator) Next() {
+	itr.setIdx(itr.idx + 1)
+}
+
+func (itr *blockIterator) Valid() bool {
+	return itr.err != io.EOF // TODO 这里用err比较好
+}
+func (itr *blockIterator) Rewind() bool {
+	itr.setIdx(0)
+	return true
+}
+func (itr *blockIterator) Item() utils.Item {
+	return itr.it
+}
+func (itr *blockIterator) Close() error {
+	return nil
+}
