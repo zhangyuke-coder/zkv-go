@@ -106,114 +106,114 @@ func TestPsarameter(t *testing.T) {
 
 // TestCompact 测试L0到Lmax压缩
 func TestCompact(t *testing.T) {
-	// clearDir()
-	// lsm := buildLSM()
-	// ok := false
-	// l0TOLMax := func() {
-	// 	// 正常触发即可
-	// 	baseTest(t, lsm, 128)
-	// 	// 直接触发压缩执行
-	// 	fid := lsm.levels.maxFID + 1
-	// 	lsm.levels.runOnce(1)
-	// 	for _, t := range lsm.levels.levels[6].tables {
-	// 		if t.fid == fid {
-	// 			ok = true
-	// 		}
-	// 	}
-	// 	utils.CondPanic(!ok, fmt.Errorf("[l0TOLMax] fid not found"))
-	// }
-	// l0ToL0 := func() {
-	// 	// 先写一些数据进来
-	// 	baseTest(t, lsm, 128)
-	// 	fid := lsm.levels.maxFID + 1
-	// 	cd := buildCompactDef(lsm, 0, 0, 0)
-	// 	// 非常tricky的处理方法，为了能通过检查
-	// 	tricky(cd.thisLevel.tables)
-	// 	ok := lsm.levels.fillTablesL0ToL0(cd)
-	// 	utils.CondPanic(!ok, fmt.Errorf("[l0ToL0] lsm.levels.fillTablesL0ToL0(cd) ret == false"))
-	// 	err := lsm.levels.runCompactDef(0, 0, *cd)
-	// 	// 删除全局状态，便于下游测试逻辑
-	// 	lsm.levels.compactState.delete(*cd)
-	// 	utils.Err(err)
-	// 	ok = false
-	// 	for _, t := range lsm.levels.levels[0].tables {
-	// 		if t.fid == fid {
-	// 			ok = true
-	// 		}
-	// 	}
-	// 	utils.CondPanic(!ok, fmt.Errorf("[l0ToL0] fid not found"))
-	// }
-	// nextCompact := func() {
-	// 	baseTest(t, lsm, 128)
-	// 	fid := lsm.levels.maxFID + 1
-	// 	cd := buildCompactDef(lsm, 0, 0, 1)
-	// 	// 非常tricky的处理方法，为了能通过检查
-	// 	tricky(cd.thisLevel.tables)
-	// 	ok := lsm.levels.fillTables(cd)
-	// 	utils.CondPanic(!ok, fmt.Errorf("[nextCompact] lsm.levels.fillTables(cd) ret == false"))
-	// 	err := lsm.levels.runCompactDef(0, 0, *cd)
-	// 	// 删除全局状态，便于下游测试逻辑
-	// 	lsm.levels.compactState.delete(*cd)
-	// 	utils.Err(err)
-	// 	ok = false
-	// 	for _, t := range lsm.levels.levels[1].tables {
-	// 		if t.fid == fid {
-	// 			ok = true
-	// 		}
-	// 	}
-	// 	utils.CondPanic(!ok, fmt.Errorf("[nextCompact] fid not found"))
-	// }
-
-	// maxToMax := func() {
-	// 	baseTest(t, lsm, 128)
-	// 	fid := lsm.levels.maxFID + 1
-	// 	cd := buildCompactDef(lsm, 6, 6, 6)
-	// 	// 非常tricky的处理方法，为了能通过检查
-	// 	tricky(cd.thisLevel.tables)
-	// 	ok := lsm.levels.fillTables(cd)
-	// 	utils.CondPanic(!ok, fmt.Errorf("[maxToMax] lsm.levels.fillTables(cd) ret == false"))
-	// 	err := lsm.levels.runCompactDef(0, 6, *cd)
-	// 	// 删除全局状态，便于下游测试逻辑
-	// 	lsm.levels.compactState.delete(*cd)
-	// 	utils.Err(err)
-	// 	ok = false
-	// 	for _, t := range lsm.levels.levels[6].tables {
-	// 		if t.fid == fid {
-	// 			ok = true
-	// 		}
-	// 	}
-	// 	utils.CondPanic(!ok, fmt.Errorf("[maxToMax] fid not found"))
-	// }
-	// parallerCompact := func() {
-	// 	baseTest(t, lsm, 128)
-	// 	cd := buildCompactDef(lsm, 0, 0, 1)
-	// 	// 非常tricky的处理方法，为了能通过检查
-	// 	tricky(cd.thisLevel.tables)
-	// 	ok := lsm.levels.fillTables(cd)
-	// 	utils.CondPanic(!ok, fmt.Errorf("[parallerCompact] lsm.levels.fillTables(cd) ret == false"))
-	// 	// 构建完全相同两个压缩计划的执行，以便于百分比构建 压缩冲突
-	// 	go lsm.levels.runCompactDef(0, 0, *cd)
-	// 	lsm.levels.runCompactDef(0, 0, *cd)
-	// 	// 检查compact status状态查看是否在执行并行压缩
-	// 	isParaller := false
-	// 	for _, state := range lsm.levels.compactState.levels {
-	// 		if len(state.ranges) != 0 {
-	// 			isParaller = true
-	// 		}
-	// 	}
-	// 	utils.CondPanic(!isParaller, fmt.Errorf("[parallerCompact] not is paralle"))
-	// }
-	// // 运行N次测试多个sst的影响
-	// runTest(1, l0TOLMax, l0ToL0, nextCompact, maxToMax, parallerCompact)
 	clearDir()
 	lsm := buildLSM()
-	lsm.StartCompacter()
-	test := func() {
-		baseTest(t, lsm, 100)
+	ok := false
+	l0TOLMax := func() {
+		// 正常触发即可
+		baseTest(t, lsm, 128)
+		// 直接触发压缩执行
+		fid := lsm.levels.maxFID + 1
+		lsm.levels.runOnce(1)
+		for _, t := range lsm.levels.levels[6].tables {
+			if t.fid == fid {
+				ok = true
+			}
+		}
+		utils.CondPanic(!ok, fmt.Errorf("[l0TOLMax] fid not found"))
 	}
-	// runTest(test, 10)
-	runTest(10, test)
-	time.Sleep(2 * 1000000000 * time.Millisecond)
+	l0ToL0 := func() {
+		// 先写一些数据进来
+		baseTest(t, lsm, 128)
+		fid := lsm.levels.maxFID + 1
+		cd := buildCompactDef(lsm, 0, 0, 0)
+		// 非常tricky的处理方法，为了能通过检查
+		tricky(cd.thisLevel.tables)
+		ok := lsm.levels.fillTablesL0ToL0(cd)
+		utils.CondPanic(!ok, fmt.Errorf("[l0ToL0] lsm.levels.fillTablesL0ToL0(cd) ret == false"))
+		err := lsm.levels.runCompactDef(0, 0, *cd)
+		// 删除全局状态，便于下游测试逻辑
+		lsm.levels.compactState.delete(*cd)
+		utils.Err(err)
+		ok = false
+		for _, t := range lsm.levels.levels[0].tables {
+			if t.fid == fid {
+				ok = true
+			}
+		}
+		utils.CondPanic(!ok, fmt.Errorf("[l0ToL0] fid not found"))
+	}
+	nextCompact := func() {
+		baseTest(t, lsm, 128)
+		fid := lsm.levels.maxFID + 1
+		cd := buildCompactDef(lsm, 0, 0, 1)
+		// 非常tricky的处理方法，为了能通过检查
+		tricky(cd.thisLevel.tables)
+		ok := lsm.levels.fillTables(cd)
+		utils.CondPanic(!ok, fmt.Errorf("[nextCompact] lsm.levels.fillTables(cd) ret == false"))
+		err := lsm.levels.runCompactDef(0, 0, *cd)
+		// 删除全局状态，便于下游测试逻辑
+		lsm.levels.compactState.delete(*cd)
+		utils.Err(err)
+		ok = false
+		for _, t := range lsm.levels.levels[1].tables {
+			if t.fid == fid {
+				ok = true
+			}
+		}
+		utils.CondPanic(!ok, fmt.Errorf("[nextCompact] fid not found"))
+	}
+
+	maxToMax := func() {
+		baseTest(t, lsm, 128)
+		fid := lsm.levels.maxFID + 1
+		cd := buildCompactDef(lsm, 6, 6, 6)
+		// 非常tricky的处理方法，为了能通过检查
+		tricky(cd.thisLevel.tables)
+		ok := lsm.levels.fillTables(cd)
+		utils.CondPanic(!ok, fmt.Errorf("[maxToMax] lsm.levels.fillTables(cd) ret == false"))
+		err := lsm.levels.runCompactDef(0, 6, *cd)
+		// 删除全局状态，便于下游测试逻辑
+		lsm.levels.compactState.delete(*cd)
+		utils.Err(err)
+		ok = false
+		for _, t := range lsm.levels.levels[6].tables {
+			if t.fid == fid {
+				ok = true
+			}
+		}
+		utils.CondPanic(!ok, fmt.Errorf("[maxToMax] fid not found"))
+	}
+	parallerCompact := func() {
+		baseTest(t, lsm, 128)
+		cd := buildCompactDef(lsm, 0, 0, 1)
+		// 非常tricky的处理方法，为了能通过检查
+		tricky(cd.thisLevel.tables)
+		ok := lsm.levels.fillTables(cd)
+		utils.CondPanic(!ok, fmt.Errorf("[parallerCompact] lsm.levels.fillTables(cd) ret == false"))
+		// 构建完全相同两个压缩计划的执行，以便于百分比构建 压缩冲突
+		go lsm.levels.runCompactDef(0, 0, *cd)
+		lsm.levels.runCompactDef(0, 0, *cd)
+		// 检查compact status状态查看是否在执行并行压缩
+		isParaller := false
+		for _, state := range lsm.levels.compactState.levels {
+			if len(state.ranges) != 0 {
+				isParaller = true
+			}
+		}
+		utils.CondPanic(!isParaller, fmt.Errorf("[parallerCompact] not is paralle"))
+	}
+	// 运行N次测试多个sst的影响
+	runTest(1, l0TOLMax, l0ToL0, nextCompact, maxToMax, parallerCompact)
+	// clearDir()
+	// lsm := buildLSM()
+	// lsm.StartCompacter()
+	// test := func() {
+	// 	baseTest(t, lsm, 100)
+	// }
+	// // runTest(test, 10)
+	// runTest(10, test)
+	// time.Sleep(2 * 1000000000 * time.Millisecond)
 }
 
 // 正确性测试
