@@ -34,7 +34,7 @@ func TestBase(t *testing.T) {
 	lsm := buildLSM()
 	test := func() {
 		// 基准测试
-		baseTest(t, lsm, 128)
+		baseTest(t, lsm, 1280)
 	}
 	// 运行N次测试多个sst的影响
 	runTest(1, test)
@@ -51,6 +51,7 @@ func TestClose(t *testing.T) {
 		// 重启后可正常工作才算成功
 		lsm = buildLSM()
 		baseTest(t, lsm, 128)
+		// time.Sleep(2 * 1000000000 * time.Millisecond)
 	}
 	// 运行N次测试多个sst的影响
 	runTest(1, test)
@@ -215,13 +216,36 @@ func TestCompact(t *testing.T) {
 	// runTest(10, test)
 	// time.Sleep(2 * 1000000000 * time.Millisecond)
 }
+func Benchmark_LsmBasicCRUD(b *testing.B) {
+	clearDir()
+	lsm := buildLSM()
+	e := &utils.Entry{
+		Key:       []byte("zhangyukedadadaGSBtL12345678"),
+		Value:     []byte("起飞芜湖"),
+		ExpiresAt: 123,
+	}
+	//caseList := make([]*utils.Entry, 0)
+	//caseList = append(caseList, e)
+
+	// 随机构建数据进行测试
+	lsm.Set(e)
+	for i := 1; i < 1280; i++ {
+		ee := utils.BuildEntry()
+		lsm.Set(ee)
+		// caseList = append(caseList, ee)
+	}
+	// 从levels中进行GET
+	v, err := lsm.Get(e.Key)
+	utils.Panic(err)
+	utils.CondPanic(!bytes.Equal(e.Value, v.Value), fmt.Errorf("lsm.Get(e.Key) value not equal !!!"))
+}
 
 // 正确性测试
 func baseTest(t *testing.T, lsm *LSM, n int) {
 	// 用来跟踪调试的
 	e := &utils.Entry{
-		Key:       []byte("CRTS😁硬核课堂MrGSBtL12345678"),
-		Value:     []byte("我草了"),
+		Key:       []byte("zhangyukedadadaGSBtL12345678"),
+		Value:     []byte("起飞芜湖"),
 		ExpiresAt: 123,
 	}
 	//caseList := make([]*utils.Entry, 0)

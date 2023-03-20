@@ -1,6 +1,11 @@
 package lsm
 
-import "github.com/zhangyuke-coder/zkv/utils"
+import (
+	"fmt"
+	"time"
+
+	"github.com/zhangyuke-coder/zkv/utils"
+)
 
 // LSM _
 type LSM struct {
@@ -78,6 +83,11 @@ func (lsm *LSM) StartCompacter() {
 }
 
 // Set _
+// timeCost 耗时统计
+func timeCost(start time.Time) {
+	tc := time.Since(start)
+	fmt.Printf("time cost = %v\n", tc)
+}
 func (lsm *LSM) Set(entry *utils.Entry) (err error) {
 	if entry == nil || len(entry.Key) == 0 {
 		return utils.ErrEmptyKey
@@ -96,14 +106,18 @@ func (lsm *LSM) Set(entry *utils.Entry) (err error) {
 		return err
 	}
 	// 检查是否存在immutable需要刷盘，
-	for _, immutable := range lsm.immutables {
-		if err = lsm.levels.flush(immutable); err != nil {
-			return err
+	{
+		defer timeCost(time.Now())
+		for _, immutable := range lsm.immutables {
+			if err = lsm.levels.flush(immutable); err != nil {
+				return err
+			}
+			// TODO 这里问题很大，应该是用引用计数的方式回收
+			err = immutable.close()
+			utils.Panic(err)
 		}
-		// TODO 这里问题很大，应该是用引用计数的方式回收
-		err = immutable.close()
-		utils.Panic(err)
 	}
+
 	if len(lsm.immutables) != 0 {
 		// TODO 将lsm的immutables队列置空，这里可以优化一下节省内存空间，还可以限制一下immut table的大小为固定值
 		lsm.immutables = make([]*memTable, 0)
